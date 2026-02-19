@@ -30,7 +30,7 @@ concurrency:
 
 jobs:
   zeroclaw-session:
-    
+    runs-on: ubuntu-latest
     timeout-minutes: 360
 
     steps:
@@ -248,6 +248,9 @@ jobs:
           NVIDIA_API_KEY_4: ${{ secrets.NVIDIA_API_KEY_4 }}
           NVIDIA_API_KEY_5: ${{ secrets.NVIDIA_API_KEY_5 }}
           NVIDIA_API_KEY_6: ${{ secrets.NVIDIA_API_KEY_6 }}
+          NVIDIA_API_KEY_7: ${{ secrets.NVIDIA_API_KEY_7 }}
+          NVIDIA_API_KEY_8: ${{ secrets.NVIDIA_API_KEY_8 }}
+          NVIDIA_API_KEY_9: ${{ secrets.NVIDIA_API_KEY_9 }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
           ZEROCLAW_DIR="$HOME/.zeroclaw"
@@ -283,6 +286,9 @@ jobs:
           echo "NVIDIA_API_KEY_4=$NVIDIA_API_KEY_4" >> "$GITHUB_ENV"
           echo "NVIDIA_API_KEY_5=$NVIDIA_API_KEY_5" >> "$GITHUB_ENV"
           echo "NVIDIA_API_KEY_6=$NVIDIA_API_KEY_6" >> "$GITHUB_ENV"
+          echo "NVIDIA_API_KEY_7=$NVIDIA_API_KEY_7" >> "$GITHUB_ENV"
+          echo "NVIDIA_API_KEY_8=$NVIDIA_API_KEY_8" >> "$GITHUB_ENV"
+          echo "NVIDIA_API_KEY_9=$NVIDIA_API_KEY_9" >> "$GITHUB_ENV"
           echo "TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN" >> "$GITHUB_ENV"
 
           echo "ZeroClaw configured"
@@ -424,6 +430,9 @@ jobs:
           echo "  /model MiniMaxAI/MiniMax-M1-80k"
           echo "  /model qwen/qwen3.5-397b-a17b"
           echo "  /model z-ai/glm5"
+          echo "  /model z-ai/glm4.7"
+          echo "  /model deepseek-ai/deepseek-v3.2"
+          echo "  /model mistralai/devstral-2-123b-instruct-2512"
           echo "  /model stepfun-ai/step-3.5-flash"
           echo ""
           echo "Config:      ~/.zeroclaw/config.toml"
@@ -466,7 +475,7 @@ jobs:
           # ── NVIDIA API key rotation pool ──
           # Build array of all available keys (skip empty ones)
           NVIDIA_KEYS=()
-          for K in "$NVIDIA_API_KEY" "$NVIDIA_API_KEY_2" "$NVIDIA_API_KEY_3" "$NVIDIA_API_KEY_4" "$NVIDIA_API_KEY_5" "$NVIDIA_API_KEY_6"; do
+          for K in "$NVIDIA_API_KEY" "$NVIDIA_API_KEY_2" "$NVIDIA_API_KEY_3" "$NVIDIA_API_KEY_4" "$NVIDIA_API_KEY_5" "$NVIDIA_API_KEY_6" "$NVIDIA_API_KEY_7" "$NVIDIA_API_KEY_8" "$NVIDIA_API_KEY_9"; do
             if [ -n "$K" ]; then
               NVIDIA_KEYS+=("$K")
             fi
