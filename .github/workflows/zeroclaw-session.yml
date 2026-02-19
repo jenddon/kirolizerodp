@@ -30,7 +30,7 @@ concurrency:
 
 jobs:
   zeroclaw-session:
-    
+    runs-on: ubuntu-latest
     timeout-minutes: 360
 
     steps:
@@ -245,6 +245,9 @@ jobs:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           NVIDIA_API_KEY_2: ${{ secrets.NVIDIA_API_KEY_2 }}
           NVIDIA_API_KEY_3: ${{ secrets.NVIDIA_API_KEY_3 }}
+          NVIDIA_API_KEY_4: ${{ secrets.NVIDIA_API_KEY_4 }}
+          NVIDIA_API_KEY_5: ${{ secrets.NVIDIA_API_KEY_5 }}
+          NVIDIA_API_KEY_6: ${{ secrets.NVIDIA_API_KEY_6 }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
           ZEROCLAW_DIR="$HOME/.zeroclaw"
@@ -273,10 +276,13 @@ jobs:
             echo "WARNING: No TELEGRAM_BOT_TOKEN secret found"
           fi
 
-          # Export NVIDIA API keys as env vars for custom providers
+          # Export all NVIDIA API keys for rotation pool
           echo "NVIDIA_API_KEY=$NVIDIA_API_KEY" >> "$GITHUB_ENV"
           echo "NVIDIA_API_KEY_2=$NVIDIA_API_KEY_2" >> "$GITHUB_ENV"
           echo "NVIDIA_API_KEY_3=$NVIDIA_API_KEY_3" >> "$GITHUB_ENV"
+          echo "NVIDIA_API_KEY_4=$NVIDIA_API_KEY_4" >> "$GITHUB_ENV"
+          echo "NVIDIA_API_KEY_5=$NVIDIA_API_KEY_5" >> "$GITHUB_ENV"
+          echo "NVIDIA_API_KEY_6=$NVIDIA_API_KEY_6" >> "$GITHUB_ENV"
           echo "TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN" >> "$GITHUB_ENV"
 
           echo "ZeroClaw configured"
@@ -412,6 +418,14 @@ jobs:
           echo ""
           echo "OAuth Profile: $BEST_EMAIL"
           echo ""
+          echo "Available Models (switch via Telegram):"
+          echo "  /model moonshotai/kimi-k2.5"
+          echo "  /model THUDM/glm-z1-9b"
+          echo "  /model MiniMaxAI/MiniMax-M1-80k"
+          echo "  /model qwen/qwen3.5-397b-a17b"
+          echo "  /model z-ai/glm5"
+          echo "  /model stepfun-ai/step-3.5-flash"
+          echo ""
           echo "Config:      ~/.zeroclaw/config.toml"
           echo "Workspace:   ~/.zeroclaw/workspace"
           echo "Gemini Auth: ~/.gemini/oauth_creds.json"
@@ -449,6 +463,29 @@ jobs:
           FAIL_COUNT=0
           LOOP_COUNT=0
 
+          # ── NVIDIA API key rotation pool ──
+          # Build array of all available keys (skip empty ones)
+          NVIDIA_KEYS=()
+          for K in "$NVIDIA_API_KEY" "$NVIDIA_API_KEY_2" "$NVIDIA_API_KEY_3" "$NVIDIA_API_KEY_4" "$NVIDIA_API_KEY_5" "$NVIDIA_API_KEY_6"; do
+            if [ -n "$K" ]; then
+              NVIDIA_KEYS+=("$K")
+            fi
+          done
+          NVIDIA_KEY_COUNT=${#NVIDIA_KEYS[@]}
+
+          if [ "$NVIDIA_KEY_COUNT" -eq 0 ]; then
+            echo "ERROR: No NVIDIA API keys available!"
+            exit 1
+          fi
+
+          # Pick initial key based on chain count (round-robin across sessions)
+          CURRENT_KEY_INDEX=$((CHAIN_COUNT % NVIDIA_KEY_COUNT))
+          export NVIDIA_API_KEY="${NVIDIA_KEYS[$CURRENT_KEY_INDEX]}"
+          RATE_LIMIT_LOG_POS=0
+
+          echo "  NVIDIA key pool: $NVIDIA_KEY_COUNT keys"
+          echo "  Initial key index: $CURRENT_KEY_INDEX (chain $CHAIN_COUNT % $NVIDIA_KEY_COUNT)"
+
           NOW=$(date +%s)
           SETUP_ELAPSED=$(( (NOW - JOB_START) / 60 ))
           REMAINING=$(( (CHAIN_TIME - NOW) / 60 ))
@@ -461,6 +498,37 @@ jobs:
           echo "  Remaining:        ${REMAINING} min"
           echo "  Save interval:    every ${SAVE_INTERVAL} min"
           echo "  Token refresh:    every $((TOKEN_REFRESH_INTERVAL / 60)) min"
+
+          # Helper: rotate NVIDIA API key and restart daemon
+          rotate_nvidia_key() {
+            local REASON="${1:-unknown}"
+            local OLD_INDEX=$CURRENT_KEY_INDEX
+            CURRENT_KEY_INDEX=$(( (CURRENT_KEY_INDEX + 1) % NVIDIA_KEY_COUNT ))
+            export NVIDIA_API_KEY="${NVIDIA_KEYS[$CURRENT_KEY_INDEX]}"
+
+            echo "  [KEY-ROTATE] Rotating NVIDIA key: index $OLD_INDEX -> $CURRENT_KEY_INDEX ($REASON)"
+
+            # Kill current daemon
+            if [ -f /tmp/zeroclaw.pid ]; then
+              ZEROCLAW_PID=$(cat /tmp/zeroclaw.pid)
+              kill "$ZEROCLAW_PID" 2>/dev/null
+              sleep 3
+              kill -9 "$ZEROCLAW_PID" 2>/dev/null
+            fi
+
+            # Restart with new key
+            nohup zeroclaw daemon --port ${{ env.ZEROCLAW_PORT }} >> /tmp/zeroclaw.log 2>&1 &
+            NEW_PID=$!
+            echo "$NEW_PID" > /tmp/zeroclaw.pid
+            sleep 10
+            if kill -0 "$NEW_PID" 2>/dev/null; then
+              echo "  [KEY-ROTATE] Daemon restarted with new key (PID: $NEW_PID)"
+              FAIL_COUNT=0
+            else
+              echo "  [KEY-ROTATE] WARNING: Daemon failed to start with new key"
+              tail -20 /tmp/zeroclaw.log 2>/dev/null || true
+            fi
+          }
 
           # Helper: refresh OAuth tokens
           refresh_tokens() {
@@ -580,29 +648,27 @@ jobs:
                 echo "  --- zeroclaw log (${DIFF} new lines) ---"
                 tail -n "$DIFF" /tmp/zeroclaw.log | tail -30
                 echo "  --- end log ---"
+
+                # Detect rate limit errors in new log lines (429, rate limit, quota exceeded)
+                RATE_HITS=$(tail -n "$DIFF" /tmp/zeroclaw.log | grep -ciE '429|rate.?limit|too many requests|quota.?exceeded|resource.?exhausted' || true)
+                if [ "$RATE_HITS" -gt 0 ]; then
+                  echo "  [RATE-LIMIT] Detected $RATE_HITS rate limit indicator(s) in recent log!"
+                  rotate_nvidia_key "rate-limit-detected"
+                fi
               fi
               LAST_LOG_LINES=$NEW_LINES
             fi
 
-            # Check if ZeroClaw is running, restart if needed
+            # Check if ZeroClaw is running, restart if needed (with key rotation)
             if [ -f /tmp/zeroclaw.pid ]; then
               ZEROCLAW_PID=$(cat /tmp/zeroclaw.pid)
               if ! kill -0 "$ZEROCLAW_PID" 2>/dev/null; then
                 FAIL_COUNT=$((FAIL_COUNT + 1))
                 if [ "$FAIL_COUNT" -le 5 ]; then
-                  echo "  ZeroClaw not running (attempt $FAIL_COUNT/5), restarting..."
-                  nohup zeroclaw daemon --port ${{ env.ZEROCLAW_PORT }} >> /tmp/zeroclaw.log 2>&1 &
-                  NEW_PID=$!
-                  echo "$NEW_PID" > /tmp/zeroclaw.pid
-                  sleep 15
-                  if ! kill -0 "$NEW_PID" 2>/dev/null; then
-                    echo "  ZeroClaw crashed within 15s of restart!"
-                    tail -20 /tmp/zeroclaw.log 2>/dev/null || true
-                  else
-                    echo "  ZeroClaw restarted (PID: $NEW_PID)"
-                  fi
+                  echo "  ZeroClaw not running (attempt $FAIL_COUNT/5), rotating key and restarting..."
+                  rotate_nvidia_key "crash-restart-$FAIL_COUNT"
                 elif [ "$FAIL_COUNT" -eq 6 ]; then
-                  echo "  ZeroClaw failed 5 consecutive restarts - giving up automatic restarts."
+                  echo "  ZeroClaw failed 5 consecutive restarts (all keys tried) - giving up automatic restarts."
                   echo "  Check log: /tmp/zeroclaw.log"
                 fi
               else
