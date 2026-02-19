@@ -420,7 +420,7 @@ jobs:
           echo ""
           echo "Available Models (switch via Telegram):"
           echo "  /model moonshotai/kimi-k2.5"
-          echo "  /model THUDM/glm-z1-9b"
+          echo "  /model nvidia/nemotron-3-nano-30b-a3b"
           echo "  /model MiniMaxAI/MiniMax-M1-80k"
           echo "  /model qwen/qwen3.5-397b-a17b"
           echo "  /model z-ai/glm5"
